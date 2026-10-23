@@ -722,4 +722,82 @@ TEST_SUITE("ContactListenerTests")
 		CHECK(listener.Contains(EType::Validate, floor.GetID(), body2.GetID()));
 		CHECK(listener.Contains(EType::Add, floor.GetID(), body2.GetID()));
 	}
+
+	// Check that OnContactSolved reports the impulse applied by the solver, and only for contacts that requested it
+	TEST_CASE("TestContactSolved")
+	{
+		// Contact listener that requests OnContactSolved for contacts with mReportBody and sums the reported impulses
+		class ContactListenerImpl : public ContactListener
+		{
+		public:
+			virtual void	OnContactAdded(const Body &inBody1, const Body &inBody2, const ContactManifold &inManifold, ContactSettings &ioSettings) override
+			{
+				ioSettings.mReportContactSolved = inBody1.GetID() == mReportBody || inBody2.GetID() == mReportBody;
+			}
+
+			virtual void	OnContactPersisted(const Body &inBody1, const Body &inBody2, const ContactManifold &inManifold, ContactSettings &ioSettings) override
+			{
+				OnContactAdded(inBody1, inBody2, inManifold, ioSettings);
+			}
+
+			virtual void	OnContactSolved(const Body &inBody1, const Body &inBody2, const SubShapeIDPair &inSubShapePair, float inNormalImpulse) override
+			{
+				CHECK(inBody1.GetID() < inBody2.GetID());
+				CHECK(inSubShapePair.GetBody1ID() == inBody1.GetID());
+				CHECK(inSubShapePair.GetBody2ID() == inBody2.GetID());
+				CHECK(inNormalImpulse >= 0.0f);
+				if (inBody1.GetID() == mReportBody || inBody2.GetID() == mReportBody)
+					mImpulse += inNormalImpulse;
+				else
+					++mNumUnrequested;
+			}
+
+			BodyID			mReportBody;
+			float			mImpulse = 0.0f;
+			int				mNumUnrequested = 0;
+		};
+
+		// A box resting on the floor: the impulses of one update sum to the weight of the box times the delta time, independent of the number of collision steps
+		for (int collision_steps : { 1, 2 })
+		{
+			PhysicsTestContext c(1.0f / 60.0f, collision_steps);
+			ContactListenerImpl listener;
+			c.GetSystem()->SetContactListener(&listener);
+
+			c.CreateFloor();
+			Body &box1 = c.CreateBox(RVec3(0, 1, 0), Quat::sIdentity(), EMotionType::Dynamic, EMotionQuality::Discrete, Layers::MOVING, Vec3::sOne());
+			Body &box2 = c.CreateBox(RVec3(5, 1, 0), Quat::sIdentity(), EMotionType::Dynamic, EMotionQuality::Discrete, Layers::MOVING, Vec3::sOne());
+			box1.SetAllowSleeping(false);
+			box2.SetAllowSleeping(false);
+			listener.mReportBody = box1.GetID();
+
+			// Let the boxes settle
+			c.Simulate(1.0f);
+
+			listener.mImpulse = 0.0f;
+			c.SimulateSingleStep();
+			float weight = -c.GetSystem()->GetGravity().GetY() / box1.GetMotionProperties()->GetInverseMass();
+			CHECK_APPROX_EQUAL(listener.mImpulse, weight * c.GetDeltaTime(), 0.01f * weight * c.GetDeltaTime());
+			CHECK(listener.mNumUnrequested == 0);
+		}
+
+		// A fast sphere hitting the floor through continuous collision detection: the reported impulse stops it
+		{
+			PhysicsTestContext c;
+			c.ZeroGravity();
+			ContactListenerImpl listener;
+			c.GetSystem()->SetContactListener(&listener);
+
+			c.CreateFloor();
+			Body &sphere = c.CreateSphere(RVec3(0, 1, 0), 0.1f, EMotionType::Dynamic, EMotionQuality::LinearCast, Layers::MOVING);
+			sphere.SetLinearVelocity(Vec3(0, -100, 0)); // Passes the floor in a single step
+			listener.mReportBody = sphere.GetID();
+
+			c.SimulateSingleStep();
+			float momentum = 100.0f / sphere.GetMotionProperties()->GetInverseMass();
+			CHECK_APPROX_EQUAL(listener.mImpulse, momentum, 0.01f * momentum);
+			CHECK(sphere.GetLinearVelocity().GetY() > -1.0f);
+			CHECK(listener.mNumUnrequested == 0);
+		}
+	}
 }

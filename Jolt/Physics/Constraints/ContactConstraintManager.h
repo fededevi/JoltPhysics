@@ -475,7 +475,8 @@ private:
 		float					mInvMass2;
 		float					mInvInertiaScale2;
 		uint32					mCachedManifoldHandle;
-		uint32					mNumContactPoints;
+		uint16					mNumContactPoints;
+		bool					mReportContactSolved;
 	};
 
 	/// Contact constraint class, used for solving penetrations
@@ -537,9 +538,9 @@ private:
 	template <EMotionType Type1, EMotionType Type2>
 	static bool					sSolveVelocityConstraint(ContactConstraintBase &ioConstraint, MotionProperties *ioMotionProperties1, MotionProperties *ioMotionProperties2);
 
-	/// Internal helper function to store lambdas applied during sSolveVelocityConstraint.
+	/// Internal helper function to store lambdas applied during sSolveVelocityConstraint. Returns the total impulse applied along the contact normal.
 	template <EMotionType Type1, EMotionType Type2>
-	static void					sStoreAppliedImpulses(ContactConstraintBase &ioConstraint, ManifoldCache &inManifoldCache);
+	static float				sStoreAppliedImpulses(ContactConstraintBase &ioConstraint, ManifoldCache &inManifoldCache);
 
 	/// Internal helper function to solve a single position constraint. Templated to the motion type to reduce the amount of branches and calculations.
 	template <EMotionType Type1, EMotionType Type2>

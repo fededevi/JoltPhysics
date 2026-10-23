@@ -825,7 +825,8 @@ JPH_INLINE ContactConstraintManager::ContactConstraint<Type1, Type2> *ContactCon
 	constraint->mInvInertiaScale1 = inSettings.mInvInertiaScale1;
 	constraint->mInvInertiaScale2 = inSettings.mInvInertiaScale2;
 	constraint->mCachedManifoldHandle = inCachedManifoldHandle;
-	constraint->mNumContactPoints = inNumContactPoints;
+	constraint->mNumContactPoints = uint16(inNumContactPoints);
+	constraint->mReportContactSolved = inSettings.mReportContactSolved;
 
 #ifdef JPH_TRACK_SIMULATION_STATS
 	// Track new contact constraints
@@ -1829,27 +1830,31 @@ bool ContactConstraintManager::SolveVelocityConstraints(const uint32 *inConstrai
 }
 
 template <EMotionType Type1, EMotionType Type2>
-void ContactConstraintManager::sStoreAppliedImpulses(ContactConstraintBase &ioConstraint, ManifoldCache &inManifoldCache)
+float ContactConstraintManager::sStoreAppliedImpulses(ContactConstraintBase &ioConstraint, ManifoldCache &inManifoldCache)
 {
 	ContactConstraint<Type1, Type2> &constraint = static_cast<ContactConstraint<Type1, Type2> &>(ioConstraint);
 	CachedManifold &cached_manifold = inManifoldCache.FromHandle(constraint.mCachedManifoldHandle)->GetValue();
 
+	float normal_impulse = 0.0f;
 	for (uint32 i = 0; i < constraint.mNumContactPoints; ++i)
 	{
 		const WorldContactPoint<Type1, Type2> &wcp = constraint.mContactPoints[i];
 		CachedContactPoint &ccp = cached_manifold.mContactPoints[i];
 		ccp.mNonPenetrationLambda = wcp.mNonPenetrationConstraint.GetTotalLambda();
+		normal_impulse += ccp.mNonPenetrationLambda;
 	}
 
 	cached_manifold.mFrictionLambda[0] = constraint.mFrictionConstraint1.GetTotalLambda();
 	cached_manifold.mFrictionLambda[1] = constraint.mFrictionConstraint2.GetTotalLambda();
 	cached_manifold.mAngularFrictionLambda = constraint.mAngularFrictionConstraint.GetTotalLambda();
+
+	return normal_impulse;
 }
 
 void ContactConstraintManager::StoreAppliedImpulses(const uint32 *inConstraintOffsetBegin, const uint32 *inConstraintOffsetEnd) const
 {
 	// Build dispatch table
-	using DispatchFunc = void (*)(ContactConstraintBase &, ManifoldCache &);
+	using DispatchFunc = float (*)(ContactConstraintBase &, ManifoldCache &);
 	static const DispatchFunc table[3][3] = {
 		{
 			nullptr, // Static vs static doesn't exist
@@ -1885,7 +1890,14 @@ void ContactConstraintManager::StoreAppliedImpulses(const uint32 *inConstraintOf
 			next_constraint = nullptr;
 
 		// Dispatch to the correct templated form
-		table[(int)constraint.mBody1->GetMotionType()][(int)constraint.mBody2->GetMotionType()](constraint, *mWriteCache);
+		float normal_impulse = table[(int)constraint.mBody1->GetMotionType()][(int)constraint.mBody2->GetMotionType()](constraint, *mWriteCache);
+
+		// Report the applied impulse if requested
+		if (constraint.mReportContactSolved)
+		{
+			JPH_ASSERT(mContactListener != nullptr); // Can only be requested from a contact listener callback
+			mContactListener->OnContactSolved(*constraint.mBody1, *constraint.mBody2, mWriteCache->FromHandle(constraint.mCachedManifoldHandle)->GetKey(), normal_impulse);
+		}
 	}
 }
 

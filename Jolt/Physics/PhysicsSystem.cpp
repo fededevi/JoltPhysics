@@ -1896,6 +1896,7 @@ void PhysicsSystem::JobFindCCDContacts(const PhysicsUpdateContext *ioContext, Ph
 							// This is the earliest hit so far, store it
 							mCCDBody.mContactNormal = normal;
 							mCCDBody.mBodyID2 = inResult.mBodyID2;
+							mCCDBody.mSubShapeID1 = inResult.mSubShapeID1;
 							mCCDBody.mSubShapeID2 = inResult.mSubShapeID2;
 							mCCDBody.mFraction = fraction;
 							mCCDBody.mFractionPlusSlop = fraction_plus_slop;
@@ -2093,7 +2094,7 @@ void PhysicsSystem::JobFindCCDContacts(const PhysicsUpdateContext *ioContext, Ph
 }
 
 template <EMotionType Type2>
-void PhysicsSystem::sSolveCCDContact(Body &ioBody1, float inInvM1, Mat44Arg inInvI1, Vec3Arg inR1PlusU, Body &ioBody2, Vec3Arg inR2, Vec3Arg inContactNormal, float inNormalVelocityBias, Vec3Arg inFrictionDirection, const ContactSettings &inContactSettings)
+float PhysicsSystem::sSolveCCDContact(Body &ioBody1, float inInvM1, Mat44Arg inInvI1, Vec3Arg inR1PlusU, Body &ioBody2, Vec3Arg inR2, Vec3Arg inContactNormal, float inNormalVelocityBias, Vec3Arg inFrictionDirection, const ContactSettings &inContactSettings)
 {
 	MotionProperties *body_mp = ioBody1.GetMotionProperties();
 
@@ -2162,6 +2163,8 @@ void PhysicsSystem::sSolveCCDContact(Body &ioBody1, float inInvM1, Mat44Arg inIn
 		body2_mp->SetLinearVelocityClamped(linear_velocity2);
 		body2_mp->SetAngularVelocityClamped(angular_velocity2);
 	}
+
+	return contact_constraint.GetTotalLambda();
 }
 
 void PhysicsSystem::JobResolveCCDContacts(PhysicsUpdateContext *ioContext, PhysicsUpdateContext::Step *ioStep)
@@ -2275,13 +2278,24 @@ void PhysicsSystem::JobResolveCCDContacts(PhysicsUpdateContext *ioContext, Physi
 						Vec3 friction_direction = relative_velocity - normal_velocity * ccd_body->mContactNormal;
 
 						// Dispatch to the correct form
-						using DispatchFunc = void (*)(Body &, float, Mat44Arg, Vec3Arg, Body &, Vec3Arg, Vec3Arg, float, Vec3Arg, const ContactSettings &);
+						using DispatchFunc = float (*)(Body &, float, Mat44Arg, Vec3Arg, Body &, Vec3Arg, Vec3Arg, float, Vec3Arg, const ContactSettings &);
 						static const DispatchFunc table[3] = {
 							sSolveCCDContact<EMotionType::Static>,
 							sSolveCCDContact<EMotionType::Kinematic>,
 							sSolveCCDContact<EMotionType::Dynamic>
 						};
-						table[(int)body2.GetMotionType()](body1, inv_m1, inv_i1, r1_plus_u, body2, r2, ccd_body->mContactNormal, normal_velocity_bias, friction_direction, contact_settings);
+						float normal_impulse = table[(int)body2.GetMotionType()](body1, inv_m1, inv_i1, r1_plus_u, body2, r2, ccd_body->mContactNormal, normal_velocity_bias, friction_direction, contact_settings);
+
+						// Report the applied impulse if requested (bodies sorted as in the other contact callbacks)
+						if (contact_settings.mReportContactSolved)
+						{
+							ContactListener *listener = mContactManager.GetContactListener();
+							JPH_ASSERT(listener != nullptr); // Can only be requested from a contact listener callback
+							if (body1.GetID() < body2.GetID())
+								listener->OnContactSolved(body1, body2, SubShapeIDPair(body1.GetID(), ccd_body->mSubShapeID1, body2.GetID(), ccd_body->mSubShapeID2), normal_impulse);
+							else
+								listener->OnContactSolved(body2, body1, SubShapeIDPair(body2.GetID(), ccd_body->mSubShapeID2, body1.GetID(), ccd_body->mSubShapeID1), normal_impulse);
+						}
 					}
 					else
 					{

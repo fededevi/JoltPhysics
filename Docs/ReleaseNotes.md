@@ -8,6 +8,7 @@ For breaking API changes see [this document](https://github.com/jrouwe/JoltPhysi
 
 * Added support for 64-bit ObjectLayer. This e.g. allows for more groups in case you're using `ObjectLayerPairFilterMask`.
 * `EstimateCollisionResponse` now takes surface velocities into account.
+* Added `ContactListener::OnContactSolved`, which reports the impulse that the solver applied along the contact normal after a collision step (also for contacts resolved by `EMotionQuality::LinearCast`). It is only called for contacts for which `ContactSettings::mReportContactSolved` was set in `OnContactAdded` / `OnContactPersisted`.
 
 ### Bug fixes
 
